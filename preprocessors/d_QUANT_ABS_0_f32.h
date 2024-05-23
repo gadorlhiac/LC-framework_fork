@@ -35,7 +35,7 @@ URL: The latest version of this code is available at https://github.com/burtsche
 
 Sponsor: This code is based upon work supported by the U.S. Department of Energy, Office of Science, Office of Advanced Scientific Research (ASCR), under contract DE-SC0022223.
 */
-
+#include <limits>
 
 static __global__ void d_QUANT_ABS_0_f32_kernel(const int len, byte* const __restrict__ data, const float errorbound, const float eb2, const float inv_eb2, const float threshold)
 {
