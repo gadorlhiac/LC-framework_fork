@@ -48,7 +48,7 @@ static const int TPB = 512;  // threads per block [must be power of 2 and at lea
 #define WS 32
 #endif
 
-#define NUMSTREAMS 4
+#define NUMSTREAMS 1
 
 #include <string>
 #include <cmath>
@@ -58,8 +58,9 @@ static const int TPB = 512;  // threads per block [must be power of 2 and at lea
 #include "include/sum_reduction.h"
 #include "include/max_scan.h"
 #include "include/prefix_sum.h"
-/*##include-beg##*/
-/*##include-end##*/
+#include "preprocessors/d_QUANT_ABS_0_f32.h"
+#include "components/d_BIT_4.h"
+#include "components/d_RZE_1.h"
 
 
 // copy (len) bytes from shared memory (source) to global memory (destination)
@@ -207,13 +208,16 @@ static __global__ __launch_bounds__(TPB, 2)
     __syncthreads();  // chunk produced, chunk[last] consumed
     int csize = osize;
     bool good = true;
-    /*##comp-encoder-beg##*/
     if (good) {
       byte* tmp = in; in = out; out = tmp;
-      good = d_CLOG_1(csize, in, out, temp);
+      good = d_BIT_4(csize, in, out, temp);
+     __syncthreads();
     }
-    __syncthreads();  // chunk transformed
-    /*##comp-encoder-end##*/
+    if (good) {
+      byte* tmp = in; in = out; out = tmp;
+      good = d_RZE_1(csize, in, out, temp);
+     __syncthreads();
+    }
 
     // handle carry
     if (!good || (csize >= osize)) csize = osize;
@@ -270,8 +274,7 @@ static void CheckCuda(const int line)
 
 int main(int argc, char* argv [])
 {
-  /*##print-beg##*/
-  /*##print-end##*/
+  printf("GPU LC 1.2 Algorithm: QUANT_ABS_0_f32 BIT_4 RZE_1\n");
   printf("Copyright 2024 Texas State University\n\n");
   // read input from file
   //if (argc < 3) {printf("USAGE: %s input_file_name compressed_file_name [performance_analysis (y)]\n\n", argv[0]); return -1;}
@@ -340,37 +343,26 @@ int main(int argc, char* argv [])
   }
 
   if (perf) {
-    /*##comp-warm-beg##*/
-    // Just do one event...
     int* d_fullcarry[NUMSTREAMS];
     for (size_t i=0; i < NUMSTREAMS; ++i) {
-      cudaMalloc((void **)&d_fullcarry[i], chunks * sizeof(int));
-      d_reset<<<1, 1, 0, streams[i]>>>(i);
-      cudaMemset(d_fullcarry[i], 0, chunks * sizeof(int));
-      d_encode<<<blocks, TPB, 0, streams[i]>>>(dpreencdata[i], dpreencsize, d_encoded[i], d_encsize[i], d_fullcarry[i], i);
-      cudaFree(d_fullcarry[i]);
-      cudaDeviceSynchronize();
-      CheckCuda(__LINE__);
-      /*##comp-warm-end##*/
-      /*##pre-beg##*/
       byte* d_preencdata;
       cudaMalloc((void **)&d_preencdata, insize);
       cudaMemcpy(d_preencdata, d_input[i], insize, cudaMemcpyDeviceToDevice);
       int dpreencsize = insize;
-      /*##pre-warm-beg##*/
-      /*##pre-warm-end##*/
+      double paramv[] = {3};
+      d_QUANT_ABS_0_f32(dpreencsize, d_preencdata, 1, paramv);
       cudaFree(d_preencdata);
-      /*##pre-end##*/
     }
   }
 
   GPUTimer dtimer;
   dtimer.start();
-  /*##pre-encoder-beg##*/
-  /*##pre-encoder-end##*/
+  double paramv[] = {3};
   int* d_fullcarry[NUMSTREAMS];
   for (size_t evt=0; evt < evts_per_stream; ++evt) {
     for (size_t i=0; i < NUMSTREAMS; ++i) {
+      byte* d_ptr = dpreencdata[i] + dpreencsize*evt;
+      d_QUANT_ABS_0_f32(dpreencsize, d_ptr, 1, paramv);
       cudaMalloc((void **)&d_fullcarry[i], chunks * sizeof(int));
       d_reset<<<1, 1, 0, streams[i]>>>(i);
       cudaMemset(d_fullcarry[i], 0, chunks * sizeof(byte));
